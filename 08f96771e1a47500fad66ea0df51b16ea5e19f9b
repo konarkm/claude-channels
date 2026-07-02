@@ -23,3 +23,6 @@ OPERATIONS
 - Test harness recipe: MCP Client over StdioClientTransport spawning server.ts; a harness-spawned server runs IDLE (ancestry check fails) which is exactly right for testing without stealing the stream. PHOTON_FORCE_CONNECT=1 overrides for live tests — careful, it consumes the stream.
 
 REVIEW STATE: v0.1.0 survived a full manual read + adversarial Opus review; 9 findings fixed (takeover race, restart.sh inode reuse, stale restart marker, gate coercion, spaceSenders leak, inbox collisions, context tail size, flag sanitizing, log rotation). Known-accepted: access.json read-modify-write vs /photon:access skill (ms windows), pairing reply counter burns on failed sends (1h expiry heals).
+
+--- v0.2.0 update (2026-07-01) ---
+Plugin now scoped per-session: disabled user-wide in ~/.claude/settings.json, re-enabled per-launch via --settings ~/.claude/channels/photon/enable.json (see claude-photon alias). Plain claude sessions no longer load the photon MCP at all. server.ts ancestry walk also captures the --settings flag into CHANNEL_FLAGS so /restart retypes it. Gotcha: claude plugin install re-enables the plugin user-wide — re-set to false after every update.
