@@ -94,7 +94,8 @@ function isChannelSession(): boolean {
       ) {
         CLAUDE_PID = pid
         const m = /(--channels|--dangerously-load-development-channels)\s+(\S*photon\S*)/.exec(argsOut)
-        if (m) CHANNEL_FLAGS = `${m[1]} ${m[2]}`
+        // Quotes/backslashes can't survive into the relaunch script's quoting.
+        if (m) CHANNEL_FLAGS = `${m[1]} ${m[2]}`.replace(/['"\\]/g, '')
         return true
       }
       const ppidOut = Bun.spawnSync(['ps', '-o', 'ppid=', '-p', String(pid)]).stdout.toString().trim()
@@ -122,6 +123,12 @@ if (ACTIVE) {
       process.kill(stale, 0)
       process.stderr.write(`photon channel: taking over from previous session (pid=${stale})\n`)
       process.kill(stale, 'SIGTERM')
+      // Wait for it to actually die (its shutdown takes up to ~2s) so two
+      // near-simultaneous launches can't both hold the stream.
+      for (let i = 0; i < 40; i++) {
+        try { process.kill(stale, 0) } catch { break }
+        Bun.sleepSync(100)
+      }
     }
   } catch {}
   writeFileSync(PID_FILE, String(process.pid))
@@ -280,13 +287,14 @@ function pruneExpired(a: Access): boolean {
 function assertAllowedChat(chat_id: string): void {
   const access = loadAccess()
   if (chat_id in access.groups) return
-  const sp = spaceCache.get(chat_id)
-  if (sp) {
-    const senders = spaceSenders.get(chat_id)
-    if (senders && [...senders].some(s => handleMatches(s, access.allowFrom))) return
-  }
-  // A DM space id may itself be the handle (im.space.create(handle) form).
-  if (handleMatches(chat_id, access.allowFrom)) return
+  const senders = spaceSenders.get(chat_id)
+  if (senders && [...senders].some(s => handleMatches(s, access.allowFrom))) return
+  // A DM space id may itself be (or embed) the handle — e.g. "+1555…" from
+  // im.space.create, or "any;-;+1555…" from the stream. Only segments that
+  // actually look like a handle get the normalize-and-match treatment, so an
+  // opaque group guid can't be coerced into a phone-number match.
+  const looksLikeHandle = (s: string) => s.includes('@') || /^\+?\d[\d\s().-]{6,}$/.test(s.trim())
+  if (chat_id.split(';').some(seg => looksLikeHandle(seg) && handleMatches(seg, access.allowFrom))) return
   throw new Error(`chat ${chat_id} is not allowlisted — add via /photon:access`)
 }
 
@@ -328,8 +336,13 @@ const sentMessageIds = new Set<string>() // echo suppression for our own sends
 // so operational breadcrumbs go to a file too.
 function trace(event: string, data: Record<string, unknown> = {}): void {
   try {
+    const logPath = join(STATE_DIR, 'debug.log')
+    try {
+      // Rotate rather than grow forever; one generation of history is plenty.
+      if (statSync(logPath).size > 5 * 1024 * 1024) renameSync(logPath, logPath + '.old')
+    } catch {}
     writeFileSync(
-      join(STATE_DIR, 'debug.log'),
+      logPath,
       JSON.stringify({ ts: new Date().toISOString(), event, ...data }) + '\n',
       { flag: 'a' },
     )
@@ -353,6 +366,11 @@ function capSet<T>(s: Set<T>, cap: number): void {
 function rememberSpace(space: Space, senderId?: string): void {
   spaceCache.set(space.id, space)
   capMap(spaceCache, 500)
+  // Keep the sender index coupled to the space cache so neither outlives
+  // the other (spaceSenders would otherwise grow unbounded).
+  for (const k of [...spaceSenders.keys()]) {
+    if (!spaceCache.has(k)) spaceSenders.delete(k)
+  }
   if (senderId) {
     let set = spaceSenders.get(space.id)
     if (!set) spaceSenders.set(space.id, (set = new Set()))
@@ -483,6 +501,7 @@ mcp.setNotificationHandler(
         }
       })().catch(e => {
         process.stderr.write(`photon channel: permission_request send to ${handle} failed: ${e}\n`)
+        trace('permission_relay_send_failed', { error: String(e) })
       })
     }
   },
@@ -504,7 +523,7 @@ function chunk(t: string, limit: number, mode: 'length' | 'newline'): string[] {
       cut = para > limit / 2 ? para : line > limit / 2 ? line : space > 0 ? space : limit
     }
     out.push(rest.slice(0, cut))
-    rest = rest.slice(cut).replace(/^\n+/, '')
+    rest = rest.slice(cut).replace(/^[\n ]+/, '')
   }
   if (rest) out.push(rest)
   return out
@@ -993,7 +1012,7 @@ function getContextUsage(): ContextUsage | null {
     // Read only the tail — transcripts can be tens of MB.
     const path = join(projectDir, newest.f)
     const size = statSync(path).size
-    const CHUNK = 512 * 1024
+    const CHUNK = 4 * 1024 * 1024 // must exceed the largest single JSONL row or the newest usage is missed
     const buf = readFileSync(path)
     const tail = buf.subarray(Math.max(0, size - CHUNK)).toString('utf8')
     const lines = tail.split('\n')
@@ -1144,6 +1163,10 @@ function scheduleRestart(opts: { fresh: boolean; interrupt: boolean; thenPrompt?
     )
   }
   const scriptPath = join(STATE_DIR, 'restart.sh')
+  // Unlink before writing: bash reads scripts lazily, so overwriting the file
+  // in place would corrupt a previous restart script that's still executing
+  // (e.g. a double-texted /restart). A fresh inode leaves the old one intact.
+  rmSync(scriptPath, { force: true })
   writeFileSync(scriptPath, '#!/bin/bash\n' + lines.join('\n') + '\n', { mode: 0o700 })
   Bun.spawn(['bash', '-c', `nohup bash '${scriptPath}' >/dev/null 2>&1 &`])
 }
@@ -1208,7 +1231,7 @@ async function extractContent(content: unknown, extra: Record<string, string>): 
         if (buf.length > MAX_ATTACHMENT_BYTES) return `(attachment too large: ${safeMetaValue(String(c.name))})`
         const name = safeFileName(c.name as string | undefined)
         const mime = String(c.mimeType ?? 'application/octet-stream')
-        const path = join(INBOX_DIR, `${Date.now()}-${name}`)
+        const path = join(INBOX_DIR, `${Date.now()}-${randomBytes(3).toString('hex')}-${name}`)
         mkdirSync(INBOX_DIR, { recursive: true })
         writeFileSync(path, buf)
         if (mime.startsWith('image/')) {
@@ -1230,7 +1253,7 @@ async function extractContent(content: unknown, extra: Record<string, string>): 
       if (typeof read === 'function') {
         try {
           const buf = await read()
-          const path = join(INBOX_DIR, `${Date.now()}-voice.m4a`)
+          const path = join(INBOX_DIR, `${Date.now()}-${randomBytes(3).toString('hex')}-voice.m4a`)
           mkdirSync(INBOX_DIR, { recursive: true })
           writeFileSync(path, buf)
           extra.attachment_path = path
@@ -1419,10 +1442,13 @@ void (async () => {
       attempt = 0
       process.stderr.write(`photon channel: connected to Spectrum (project ${PROJECT_ID!.slice(0, 8)}…)\n`)
       trace('connected', { flags: CHANNEL_FLAGS })
-      // If this boot completes a texted /restart, tell the requester.
+      // If this boot completes a texted /restart, tell the requester — but
+      // only for a FRESH marker; a stale one (aborted restart, later manual
+      // launch) must not trigger a spurious "back online" text.
       try {
-        readFileSync(RESTART_MARKER, 'utf8')
+        const markerTs = Date.parse(readFileSync(RESTART_MARKER, 'utf8').trim())
         rmSync(RESTART_MARKER, { force: true })
+        if (!Number.isFinite(markerTs) || Date.now() - markerTs > 10 * 60 * 1000) throw new Error('stale')
         const access = loadAccess()
         for (const handle of access.allowFrom) {
           void (async () => {
@@ -1475,12 +1501,29 @@ process.on('SIGINT', shutdown)
 process.on('SIGHUP', shutdown)
 
 // Orphan watchdog: stdin events don't reliably fire when the parent chain
-// is severed by a crash. Poll for reparenting or a dead stdin pipe.
+// is severed by a crash. Poll for reparenting or a dead stdin pipe. Also
+// verify PID-file ownership — if another server took over (and our SIGTERM
+// got lost or raced), step down instead of splitting the stream.
 const bootPpid = process.ppid
 setInterval(() => {
   const orphaned =
     (process.platform !== 'win32' && process.ppid !== bootPpid) ||
     process.stdin.destroyed ||
     process.stdin.readableEnded
-  if (orphaned) shutdown()
+  if (orphaned) {
+    shutdown()
+    return
+  }
+  if (ACTIVE && !shuttingDown) {
+    try {
+      const owner = parseInt(readFileSync(PID_FILE, 'utf8'), 10)
+      if (Number.isFinite(owner) && owner !== process.pid) {
+        process.stderr.write(`photon channel: pid file taken over by ${owner} — stepping down\n`)
+        shutdown()
+      }
+    } catch {
+      // File missing — reassert ownership (we're the only live holder).
+      try { writeFileSync(PID_FILE, String(process.pid)) } catch {}
+    }
+  }
 }, 5000).unref()
