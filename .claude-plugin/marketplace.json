@@ -1,0 +1,16 @@
+{
+  "name": "claude-channels",
+  "owner": {
+    "name": "Konark Mangudkar"
+  },
+  "metadata": {
+    "description": "Personal channel plugins for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "photon",
+      "source": "./photon",
+      "description": "iMessage channel via Photon (Spectrum) — dedicated bot number, no Apple ID required"
+    }
+  ]
+}
