@@ -77,6 +77,9 @@ mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
 // Spectrum stream. Walk the process ancestry looking for the flag; servers
 // in non-channel sessions stay idle (tools error, no Spectrum connection).
 let CLAUDE_PID: number | null = null // the owning claude process, found during the ancestry walk
+// The exact channel flags this session was launched with — the /restart
+// relauncher retypes them explicitly, so no shell alias is required.
+let CHANNEL_FLAGS = '--channels plugin:photon@claude-channels'
 
 function isChannelSession(): boolean {
   if (process.env.PHOTON_FORCE_CONNECT === '1') return true
@@ -90,6 +93,8 @@ function isChannelSession(): boolean {
         argsOut.includes('photon')
       ) {
         CLAUDE_PID = pid
+        const m = /(--channels|--dangerously-load-development-channels)\s+(\S*photon\S*)/.exec(argsOut)
+        if (m) CHANNEL_FLAGS = `${m[1]} ${m[2]}`
         return true
       }
       const ppidOut = Bun.spawnSync(['ps', '-o', 'ppid=', '-p', String(pid)]).stdout.toString().trim()
@@ -1093,8 +1098,8 @@ async function handleControl(cmd: string, space: Space, arg?: string): Promise<v
 // Type /exit (optionally interrupting the in-flight turn first) and hand the
 // relaunch to a detached shell that outlives us. It waits for the claude
 // process to actually die — a queued /exit can fire minutes later — then
-// retypes the launch command. The interactive shell's `claude` alias re-adds
-// the channels flag; --continue resumes the session that just exited.
+// retypes the launch command with the channel flags spelled out (no shell
+// alias required); --continue resumes the session that just exited.
 //
 // With thenPrompt, the script also waits until the pane is running claude
 // again (typing early would hand the text to the SHELL — never acceptable)
@@ -1103,7 +1108,7 @@ async function handleControl(cmd: string, space: Space, arg?: string): Promise<v
 // string interpolation, so its content can't inject into this script.
 function scheduleRestart(opts: { fresh: boolean; interrupt: boolean; thenPrompt?: string }): void {
   const pane = process.env.TMUX_PANE
-  const relaunch = opts.fresh ? 'claude' : 'claude --continue'
+  const relaunch = `claude ${CHANNEL_FLAGS}${opts.fresh ? '' : ' --continue'}`
   const lines: string[] = ['sleep 1']
   if (opts.interrupt) lines.push(`tmux send-keys -t "${pane}" Escape`)
   lines.push(

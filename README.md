@@ -46,7 +46,7 @@ Two-way iMessage bridge for a Claude Code session via [Photon's Spectrum](https:
    tmux new -A -s claude
    claude --channels plugin:photon@claude-channels
    ```
-   An alias keeps it automatic: `alias claude='claude --channels plugin:photon@claude-channels'`
+   A dedicated alias keeps plain `claude` channel-free while making the channel session easy to launch: `alias claude-photon='claude --channels plugin:photon@claude-channels'`. The /restart relauncher retypes the full flags itself, so no alias is required for restarts.
 6. Connect: `/photon:access allow +1<your number>`, then ask Claude in the session to text you (fresh Photon projects provision their line on first outbound send). Reply to the thread that arrives.
 
 **Known limitations (Photon free-tier shared lines, as of mid-2026)**
