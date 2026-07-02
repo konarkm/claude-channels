@@ -96,6 +96,11 @@ function isChannelSession(): boolean {
         const m = /(--channels|--dangerously-load-development-channels)\s+(\S*photon\S*)/.exec(argsOut)
         // Quotes/backslashes can't survive into the relaunch script's quoting.
         if (m) CHANNEL_FLAGS = `${m[1]} ${m[2]}`.replace(/['"\\]/g, '')
+        // Sessions that scope the plugin per-launch (user-wide disabled,
+        // re-enabled via --settings) need that flag retyped too, or the
+        // relaunched session comes up without the plugin at all.
+        const s = /--settings\s+(\S+\.json)/.exec(argsOut)
+        if (s) CHANNEL_FLAGS = `--settings ${s[1].replace(/['"\\]/g, '')} ${CHANNEL_FLAGS}`
         return true
       }
       const ppidOut = Bun.spawnSync(['ps', '-o', 'ppid=', '-p', String(pid)]).stdout.toString().trim()

@@ -48,13 +48,23 @@ Two-way iMessage bridge for a Claude Code session via [Photon's Spectrum](https:
    EOF
    ```
    (Without this, use `claude --dangerously-load-development-channels plugin:photon@claude-channels` and accept the prompt each launch.)
-5. Launch inside tmux so remote `/compact` / `/restart` can drive the terminal:
+5. (Recommended) Scope the plugin to the channel session only. Installed plugins are enabled user-wide, so every Claude Code session spawns the channel server — non-channel sessions detect this and idle safely, but the `photon` MCP server and its tools still show up everywhere. To keep plain `claude` completely photon-free, disable the plugin user-wide and re-enable it per-launch:
+   ```bash
+   # ~/.claude/settings.json        →  "enabledPlugins": { "photon@claude-channels": false, ... }
+   # ~/.claude/channels/photon/enable.json:
+   { "enabledPlugins": { "photon@claude-channels": true } }
+   ```
+6. Launch inside tmux so remote `/compact` / `/restart` can drive the terminal:
    ```bash
    tmux new -A -s claude
-   claude --channels plugin:photon@claude-channels
+   claude --settings ~/.claude/channels/photon/enable.json --channels plugin:photon@claude-channels
    ```
-   A dedicated alias keeps plain `claude` channel-free while making the channel session easy to launch: `alias claude-photon='claude --channels plugin:photon@claude-channels'`. The /restart relauncher retypes the full flags itself, so no alias is required for restarts.
-6. Connect: `/photon:access allow +1<your number>`, then ask Claude in the session to text you (fresh Photon projects provision their line on first outbound send). Reply to the thread that arrives.
+   A dedicated alias makes the channel session easy to launch:
+   ```bash
+   alias claude-photon='claude --settings ~/.claude/channels/photon/enable.json --channels plugin:photon@claude-channels'
+   ```
+   (Skip `--settings` if you skipped step 5.) The /restart relauncher retypes the full flags itself, so no alias is required for restarts.
+7. Connect: `/photon:access allow +1<your number>`, then ask Claude in the session to text you (fresh Photon projects provision their line on first outbound send). Reply to the thread that arrives.
 
 **Updating**
 
@@ -64,7 +74,7 @@ Two-way iMessage bridge for a Claude Code session via [Photon's Spectrum](https:
 /plugin install photon@claude-channels
 ```
 
-Then text `/restart` — the session relaunches on the new version by itself.
+Reinstalling re-enables the plugin user-wide — if you scoped it in step 5, set `"photon@claude-channels": false` in `~/.claude/settings.json` again. Then text `/restart` — the session relaunches on the new version by itself.
 
 **Known limitations (Photon free-tier shared lines, as of mid-2026)**
 
