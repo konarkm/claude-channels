@@ -1125,8 +1125,11 @@ function scheduleRestart(opts: { fresh: boolean; interrupt: boolean; thenPrompt?
     // Newlines would submit mid-prompt; collapse to spaces.
     writeFileSync(promptFile, opts.thenPrompt.replace(/\s*\n\s*/g, ' ').slice(0, 4000), { mode: 0o600 })
     lines.push(
-      // Wait until the pane's foreground process is no longer a shell.
+      // Wait until the pane's foreground process is no longer a shell. If it
+      // still is after the timeout, claude never came back — ABORT rather
+      // than type the prompt into a shell.
       `j=0; while [ $j -lt 120 ]; do c=$(tmux display-message -p -t "${pane}" '#{pane_current_command}'); case "$c" in zsh|bash|sh|-zsh|-bash) sleep 1; j=$((j+1));; *) break;; esac; done`,
+      `c=$(tmux display-message -p -t "${pane}" '#{pane_current_command}'); case "$c" in zsh|bash|sh|-zsh|-bash) rm -f "${promptFile}"; exit 1;; esac`,
       'sleep 4', // let the input box render
       `tmux load-buffer -b photonprompt "${promptFile}"`,
       `tmux paste-buffer -b photonprompt -d -t "${pane}"`,

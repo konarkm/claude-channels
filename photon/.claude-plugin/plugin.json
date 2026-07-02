@@ -1,7 +1,7 @@
 {
   "name": "photon",
   "description": "iMessage channel for Claude Code via Photon (Spectrum) — messaging bridge on a dedicated iMessage number with built-in access control. Manage pairing, allowlists, and policy via /photon:access.",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "keywords": [
     "imessage",
     "photon",
