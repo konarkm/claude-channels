@@ -1,0 +1,25 @@
+AGENT HANDOFF NOTES (2026-07-02, session that built v0.0.1→v0.1.0)
+
+Read this before modifying the photon plugin. Hard-won facts:
+
+ARCHITECTURE
+- server.ts is a Claude Code channel: stdio MCP server + 'claude/channel' experimental capability. Inbound = notifications/claude/channel (content + meta attrs). Outbound = plain MCP tools. Docs: code.claude.com/docs/en/channels-reference.md. Modeled on anthropics/claude-plugins-official telegram plugin.
+- EVERY session with the plugin enabled spawns this server. Only one may consume the Spectrum stream or messages get split silently. Three guards: process-ancestry check for the channels flag (isChannelSession), per-machine PID file with newest-wins takeover + death-wait, and an ownership watchdog. Cross-MACHINE there is no guard — one Photon project = one live channel session anywhere.
+- Terminal control (compact/clear/restart/peek/queue_prompt) = tmux send-keys against inherited $TMUX_PANE. Keystrokes typed mid-turn queue until turn end — that's why the agent-facing tools are safe. Texted commands send Escape first (deliberate interrupt); agent tools must NOT.
+- restart: writes restart.sh to ~/.claude/channels/photon/ (unlink before write — bash reads scripts lazily), detached via nohup, waits for the claude PID to die, retypes 'claude <CHANNEL_FLAGS> --continue'. then_prompt goes via file + tmux load-buffer (NEVER shell-interpolate prompt content) and aborts if the pane is still a shell after 120s (typing into a bare shell is the one unacceptable failure).
+
+SPECTRUM/PHOTON GOTCHAS (verified by testing, mid-2026, spectrum-ts 8.1.1, free tier)
+- react() takes the SIX RAW EMOJI (👍❤️👎😂‼️❓) only — tapback NAMES like 'like' become invalid custom-emoji tapbacks that render as NOTHING. photon-hq's own skill docs are wrong about this. normalizeTapback handles it.
+- react() resolves undefined when the platform skips — report failure, don't claim success.
+- Shared (free) lines: edit_message fails ('Unknown server error'), unsend_message returns success but does NOT retract. Multi-part attachments arrive out of order (p:1/ before p:0/). Read receipts/typing/tapbacks/effects/files all work. Recipient sees 'Ha Ha' badge for 😂 — that's correct native rendering, not a bug.
+- Fresh projects have lines:[] — the number is provisioned on FIRST OUTBOUND send (allow the user's number, then text them; don't wait for inbound).
+- isFromMe flag + direction:'outbound' + sender.kind:'agent' + sentMessageIds all guard against echo loops.
+
+OPERATIONS
+- Install flow: marketplace is the LOCAL CLONE path (~/code/claude-channels on both machines). After source edits: bump plugin.json version, claude plugin uninstall+install (installs are SNAPSHOTS — stale cache was a real bug), then text /restart to the live session.
+- Launch: claude-photon alias (= claude --channels plugin:photon@claude-channels) inside tmux new -A -s claude. Plain 'claude' is deliberately channel-free. Prompt-free because of /Library/Application Support/ClaudeCode/managed-settings.json allowlist (channelsEnabled + allowedChannelPlugins — REPLACES Anthropic's default list).
+- Creds: ~/.claude/channels/photon/.env (chmod 600). Laptop and mini currently share ONE Photon project — run the channel on one machine at a time until the mini gets its own project.
+- Debugging: ~/.claude/channels/photon/debug.log (JSONL, rotates at 5MB): inbound/control/connected/stream_error events. MCP-side log: ~/Library/Caches/claude-cli-nodejs/<proj>/mcp-logs-plugin-photon-photon/. Server stderr is captured NOWHERE else — trace() is the only reliable breadcrumb.
+- Test harness recipe: MCP Client over StdioClientTransport spawning server.ts; a harness-spawned server runs IDLE (ancestry check fails) which is exactly right for testing without stealing the stream. PHOTON_FORCE_CONNECT=1 overrides for live tests — careful, it consumes the stream.
+
+REVIEW STATE: v0.1.0 survived a full manual read + adversarial Opus review; 9 findings fixed (takeover race, restart.sh inode reuse, stale restart marker, gate coercion, spaceSenders leak, inbox collisions, context tail size, flag sanitizing, log rotation). Known-accepted: access.json read-modify-write vs /photon:access skill (ms windows), pairing reply counter burns on failed sends (1h expiry heals).
