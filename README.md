@@ -12,9 +12,16 @@ Two-way iMessage bridge for a Claude Code session via [Photon's Spectrum](https:
 - Markdown rich text, file/image attachments both ways, native tapbacks, quote-reply threading, typing indicators, read receipts, iMessage send effects (confetti, slam, invisible ink, …)
 - Group chats with per-group allowlists and mention-gating
 - Permission relay: tool-approval prompts get texted to you; reply `yes abcde` / `no abcde`
-- Remote session control by text: `/compact`, `/clear`, `/context` (context-window usage), `/restart` (exit + resume via `--continue`), `/restart fresh`
-- Agent self-management tools: `check_context`, `compact_session`, and `restart_session` — both queue via the terminal input, so they take effect when the current turn ends, never mid-thought
+- Remote session control by text: `/compact`, `/clear`, `/context` (context-window usage), `/peek` (snapshot of the terminal screen), `/restart` (exit + resume via `--continue`), `/restart fresh`
+- Agent self-management tools: `check_context`, `compact_session`, `restart_session` (with `then_prompt` to continue work across the restart), and `queue_prompt` (queue its own next turn) — mutating ones go through the terminal input queue, so they take effect when the current turn ends, never mid-thought
 - Access control: sender allowlist with a pairing-code flow (`/photon:access`), outbound restricted to allowlisted chats, channel state protected from exfiltration
+
+**Requirements**
+
+- Claude Code **v2.1.80+** with Anthropic auth (claude.ai or Console) — channels don't work on Bedrock/Vertex/Foundry; v2.1.187+ recommended (channel-connection fixes)
+- [Bun](https://bun.sh) on your PATH — the channel server runs on it (`curl -fsSL https://bun.sh/install | bash`)
+- macOS or Linux (the server uses `ps`/`lsof` for session detection)
+- `tmux` — optional, but required for the remote `/compact`/`/clear`/`/restart`/`/peek` commands and the agent's `compact_session`/`restart_session`/`queue_prompt` tools
 
 **Setup**
 
@@ -48,6 +55,16 @@ Two-way iMessage bridge for a Claude Code session via [Photon's Spectrum](https:
    ```
    A dedicated alias keeps plain `claude` channel-free while making the channel session easy to launch: `alias claude-photon='claude --channels plugin:photon@claude-channels'`. The /restart relauncher retypes the full flags itself, so no alias is required for restarts.
 6. Connect: `/photon:access allow +1<your number>`, then ask Claude in the session to text you (fresh Photon projects provision their line on first outbound send). Reply to the thread that arrives.
+
+**Updating**
+
+```
+/plugin marketplace update claude-channels
+/plugin uninstall photon@claude-channels
+/plugin install photon@claude-channels
+```
+
+Then text `/restart` — the session relaunches on the new version by itself.
 
 **Known limitations (Photon free-tier shared lines, as of mid-2026)**
 

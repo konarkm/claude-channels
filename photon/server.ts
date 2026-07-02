@@ -1418,7 +1418,7 @@ void (async () => {
       im = imessage(instance as never) as unknown as IMInstance
       attempt = 0
       process.stderr.write(`photon channel: connected to Spectrum (project ${PROJECT_ID!.slice(0, 8)}…)\n`)
-      trace('connected')
+      trace('connected', { flags: CHANNEL_FLAGS })
       // If this boot completes a texted /restart, tell the requester.
       try {
         readFileSync(RESTART_MARKER, 'utf8')
